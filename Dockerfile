@@ -26,7 +26,9 @@ FROM debian:bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir /CLIProxyAPI
+RUN groupadd --gid 10001 cpa && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/cpa --shell /usr/sbin/nologin cpa && \
+    install -d -m 0755 /CLIProxyAPI && \
+    install -d -o cpa -g cpa -m 0700 /home/cpa/.cli-proxy-api /CLIProxyAPI/logs
 
 COPY --from=builder ./app/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 
@@ -42,4 +44,6 @@ ENV TZ=Asia/Shanghai
 
 RUN cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
 
-CMD ["./CLIProxyAPI"]
+ENV HOME=/home/cpa
+USER 10001:10001
+CMD ["/bin/sh", "-c", "umask 077; exec ./CLIProxyAPI"]
