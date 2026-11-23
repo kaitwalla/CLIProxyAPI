@@ -2,12 +2,10 @@ package xai
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
 
 	"github.com/MoeForge/moego/json"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
-	log "github.com/sirupsen/logrus"
 )
 
 // TokenStorage stores xAI OAuth credentials on disk.
@@ -40,29 +38,15 @@ func (ts *TokenStorage) SaveTokenToFile(authFilePath string) error {
 	misc.LogSavingCredentials(authFilePath)
 	ts.Type = "xai"
 	ts.AuthKind = "oauth"
-	if errMkdirAll := os.MkdirAll(filepath.Dir(authFilePath), 0o700); errMkdirAll != nil {
-		return fmt.Errorf("xai token storage: create directory: %w", errMkdirAll)
-	}
 
 	data, errMerge := misc.MergeMetadata(ts, ts.Metadata)
 	if errMerge != nil {
 		return fmt.Errorf("xai token storage: merge metadata: %w", errMerge)
 	}
 
-	file, err := os.Create(authFilePath)
-	if err != nil {
-		return fmt.Errorf("xai token storage: create token file: %w", err)
-	}
-	defer func() {
-		if errClose := file.Close(); errClose != nil {
-			log.Errorf("xai token storage: close token file error: %v", errClose)
-		}
-	}()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err = encoder.Encode(data); err != nil {
-		return fmt.Errorf("xai token storage: write token file: %w", err)
-	}
-	return nil
+	return misc.WritePrivateCredential(authFilePath, func(w io.Writer) error {
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(data)
+	})
 }
