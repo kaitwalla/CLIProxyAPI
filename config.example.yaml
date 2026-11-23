@@ -36,7 +36,7 @@ server:
 
   # Maximum allowed size (in bytes) for incoming HTTP request bodies.
   # Requests exceeding this limit are rejected with HTTP 413 Payload Too Large.
-  # Default is 0 (disabled / no limit).
+  # Hardened default is 33554432 (32 MiB). Set 0 explicitly to disable.
   max-request-body-bytes: 33554432
 
   # Negotiated compression of downstream HTTP responses (including SSE streams).
@@ -124,7 +124,7 @@ management:
   # Disable the bundled management control panel asset download and HTTP route when true.
   disable-control-panel: false
 
-  # Disable automatic periodic background updates of the management panel from GitHub (default: false).
+  # Disable automatic periodic background updates of the management panel from GitHub (default: true).
   # When enabled, the panel must be provisioned locally; no runtime downloads occur.
   disable-auto-update-panel: true
 
