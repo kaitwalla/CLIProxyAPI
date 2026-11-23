@@ -37,7 +37,7 @@ server:
   # Maximum allowed size (in bytes) for incoming HTTP request bodies.
   # Requests exceeding this limit are rejected with HTTP 413 Payload Too Large.
   # Default is 0 (disabled / no limit).
-  max-request-body-bytes: 0
+  max-request-body-bytes: 33554432
 
   # Negotiated compression of downstream HTTP responses (including SSE streams).
   # Responses are compressed only when the client advertises zstd or gzip in
@@ -122,11 +122,11 @@ management:
   secret-key: ""
 
   # Disable the bundled management control panel asset download and HTTP route when true.
-  disable-control-panel: false
+  disable-control-panel: true
 
   # Disable automatic periodic background updates of the management panel from GitHub (default: false).
   # When enabled, the panel is only downloaded on first access if missing, and never auto-updated afterward.
-  # disable-auto-update-panel: false
+  disable-auto-update-panel: true
 
   # Base URL of remote management API when using TUI client mode (cliproxyapi --tui).
   # Defaults to http://127.0.0.1:<port> if not set. Can also be set via --management-base-url.
