@@ -80,7 +80,7 @@ func validateStartupConfig(data []byte, optional bool) (*startupConfig, error) {
 	cfg.Discovery.ServiceType = DefaultDiscoveryServiceType
 	cfg.Discovery.Subtypes = []string{"_chat-completions", "_responses", "_messages", "_generate-content", "_interactions"}
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
-	cfg.RemoteManagement.DisableControlPanel = true
+	cfg.RemoteManagement.DisableControlPanel = false
 	cfg.RemoteManagement.DisableAutoUpdatePanel = true
 	cfg.CredentialInFlight = DefaultCredentialInFlightConfig()
 
