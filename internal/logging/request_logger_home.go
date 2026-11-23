@@ -26,13 +26,18 @@ type homeRequestLogPayload struct {
 	RequestLog string              `json:"request_log,omitempty"`
 }
 
+func sensitiveLogHeader(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(key, "authorization") || strings.Contains(key, "cookie") || strings.Contains(key, "token") || strings.Contains(key, "secret") || strings.Contains(key, "api-key") || strings.Contains(key, "apikey") || strings.Contains(key, "api_key")
+}
+
 func cloneHeaders(headers map[string][]string) map[string][]string {
 	if len(headers) == 0 {
 		return nil
 	}
 	out := make(map[string][]string, len(headers))
 	for key, values := range headers {
-		if strings.TrimSpace(key) == "" {
+		if strings.TrimSpace(key) == "" || sensitiveLogHeader(key) {
 			continue
 		}
 		if values == nil {
