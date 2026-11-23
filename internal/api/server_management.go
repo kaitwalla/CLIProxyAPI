@@ -70,7 +70,8 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/proxy-url", s.mgmt.PutProxyURL)
 		mgmt.DELETE("/proxy-url", s.mgmt.DeleteProxyURL)
 
-		mgmt.POST("/api-call", s.mgmt.APICall)
+		// Generic administrative HTTP forwarding is intentionally unavailable in the hardened build.
+		mgmt.POST("/api-call", rejectAdministrativeAPICall)
 
 		mgmt.GET("/quota-exceeded/switch-project", s.mgmt.GetSwitchProject)
 		mgmt.PUT("/quota-exceeded/switch-project", s.mgmt.PutSwitchProject)
@@ -201,6 +202,10 @@ func (s *Server) registerManagementRoutes() {
 	}
 }
 
+func rejectAdministrativeAPICall(c *gin.Context) {
+	c.JSON(http.StatusForbidden, gin.H{"error": "generic administrative HTTP forwarding is disabled in this build"})
+}
+
 func (s *Server) managementAvailabilityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !s.managementAvailable(c) {
@@ -298,7 +303,7 @@ func (s *Server) pluginResourceNoRoute(c *gin.Context) {
 		return
 	}
 	cfg := s.getConfig()
-	if cfg == nil || cfg.Home.Enabled || s.pluginHost == nil {
+	if cfg == nil || cfg.Home.Enabled || !cfg.Plugins.Enabled || s.pluginHost == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
