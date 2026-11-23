@@ -64,6 +64,7 @@ func validateStartupConfig(data []byte, optional bool) (*startupConfig, error) {
 	var cfg Config
 	// Keep defaults aligned with LoadConfigOptional.
 	cfg.Host = "" // Default empty: binds to all interfaces (IPv4 + IPv6)
+	cfg.MaxRequestBodyBytes = 32 << 20
 	cfg.LoggingToFile = false
 	cfg.LogsMaxTotalSizeMB = 0
 	cfg.ErrorLogsMaxFiles = 10
