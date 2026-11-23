@@ -122,10 +122,10 @@ management:
   secret-key: ""
 
   # Disable the bundled management control panel asset download and HTTP route when true.
-  disable-control-panel: true
+  disable-control-panel: false
 
   # Disable automatic periodic background updates of the management panel from GitHub (default: false).
-  # When enabled, the panel is only downloaded on first access if missing, and never auto-updated afterward.
+  # When enabled, the panel must be provisioned locally; no runtime downloads occur.
   disable-auto-update-panel: true
 
   # Base URL of remote management API when using TUI client mode (cliproxyapi --tui).
