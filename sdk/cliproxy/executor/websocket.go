@@ -137,3 +137,22 @@ func WebsocketInputLossError(ctx context.Context) error {
 	}
 	return &UpstreamWebsocketTurnError{NotSent: true}
 }
+
+type streamOwnsWebsocketTerminalErrorsKey struct{}
+
+// WithStreamOwnedWebsocketTerminalErrors opts the downstream handler into
+// delivering explicit terminal errors and closing the downstream socket itself.
+// Transport-loss notifications retain their existing behavior.
+func WithStreamOwnedWebsocketTerminalErrors(ctx context.Context) context.Context {
+	return context.WithValue(ctx, streamOwnsWebsocketTerminalErrorsKey{}, true)
+}
+
+// StreamOwnsWebsocketTerminalErrors reports whether the downstream handler owns
+// terminal error delivery rather than the independent disconnect watcher.
+func StreamOwnsWebsocketTerminalErrors(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	owned, _ := ctx.Value(streamOwnsWebsocketTerminalErrorsKey{}).(bool)
+	return owned
+}

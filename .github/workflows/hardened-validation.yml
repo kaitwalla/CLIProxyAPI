@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   upstream-baseline:
+    # This comparison intentionally runs known-broken upstream code; it is diagnostic only.
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -21,6 +23,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Download baseline modules
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then break; fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            sleep 5
+          done
+          go mod verify
       - name: Upstream test baseline
         run: go test ./...
 
@@ -69,6 +79,7 @@ jobs:
           go test ./sdk/cliproxy -run '^TestServiceHeartbeatFailoverDoesNotDrainBlockingScope$' -count=10
           go test ./internal/wstunnel -run '^TestHubExchange_ManyToManyFullDuplexMultiplexing$' -count=20
           go test ./sdk/api/handlers/openai -run '^TestResponsesWebsocketSameSessionLaterCreate429DoesNotReplayAfterDownstreamCommit$' -count=30
+          go test ./internal/runtime/executor -run '^TestCodexWebsocketsExecutor_(UnbufferedUpstreamErrorIsDeliveredBeforeDisconnectNotify|PreOutputUpstreamErrorDoesNotNotifyDisconnect)$' -count=3
 
   docker:
     runs-on: ubuntu-latest
