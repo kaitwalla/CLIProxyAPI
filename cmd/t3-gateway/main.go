@@ -58,13 +58,15 @@ func (g *gateway) load() (config,error) {
  b,err:=os.ReadFile(g.configPath)
  if err!=nil{return c,err}
  d:=json.NewDecoder(bytes.NewReader(b)); d.DisallowUnknownFields()
+ if !uniqueJSON(b){return c,errors.New("ambiguous or invalid policy JSON")}
  if err=d.Decode(&c);err!=nil{return c,err}
  if d.Decode(new(any))!=io.EOF{return c,errors.New("trailing config")}
  ids:=map[string]bool{}
  hashes:=map[string]bool{}
  for _,p:=range c.Clients {
   if p.ID==""||strings.ContainsRune(p.ID,0)||ids[p.ID]||p.Expires.IsZero()||p.RequestsPerDay<=0||p.RequestsPerMinute<=0||p.Concurrent<=0||p.MaxBodyBytes<=0||p.MaxBodyBytes>32<<20||p.MaxDailyInputBytes<0||p.MaxOutputTokens<0||p.MaxDailyRequestedOutputTokens<0||p.MaxDailyReportedTokens<0||(p.MaxDailyRequestedOutputTokens>0&&p.MaxOutputTokens==0)||len(p.Models)==0{return c,errors.New("invalid client policy")}
-  if g.backendMode!=""&&(p.MaxDailyInputBytes<=0||p.MaxOutputTokens<=0||p.MaxDailyRequestedOutputTokens<=0){return c,errors.New("production policy requires positive input and output admission limits")}
+  if g.backendMode!=""&&(p.MaxDailyInputBytes<=0||p.MaxOutputTokens<16||p.MaxDailyRequestedOutputTokens<=0){return c,errors.New("production policy requires positive input and output admission limits")}
+  if p.RequireReportedUsage&&p.Concurrent!=1{return c,errors.New("strict usage reporting requires one concurrent request per client")}
   ids[p.ID]=true
   for _,h:=range []string{p.KeyHash,p.MonitorHash}{
    raw,e:=hex.DecodeString(h)
@@ -89,7 +91,7 @@ func (g *gateway) reserve(p policy, now time.Time, model string, costs ...int64)
   if p.MaxDailyReportedTokens>0||p.RequireReportedUsage {
    var u usageTotals
    if ub:=tx.Bucket([]byte("reported-usage"));ub!=nil{if raw:=ub.Get([]byte(p.ID+"\x00"+day));raw!=nil{if err=json.Unmarshal(raw,&u);err!=nil{return err}}}
-   if p.RequireReportedUsage&&(u.Unknown>0||int64(v.Daily)>u.Known+u.Unknown+int64(g.active[p.ID])){return errQuota}
+   if p.RequireReportedUsage&&(u.Unknown>0||int64(v.Daily)!=u.Known+u.Unknown){return errQuota}
    if p.MaxDailyReportedTokens>0&&(u.Input>=p.MaxDailyReportedTokens||u.Output>=p.MaxDailyReportedTokens-u.Input){return errQuota}
   }
   if v.Daily>=p.RequestsPerDay||v.Recent>=p.RequestsPerMinute{return errQuota}
@@ -129,6 +131,8 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
    raw:=b.Get([]byte(p.ID));if raw==nil{return nil};return json.Unmarshal(raw,&v)
   })
   if err!=nil{deny(503);return}
+  now:=time.Now().UTC();day:=now.Format("2006-01-02");minute:=now.Format("2006-01-02T15:04")
+  if v.Day!=day{v=counter{Day:day,Minute:minute}}else if v.Minute!=minute{v.Minute=minute;v.Recent=0}
   w.Header().Set("Content-Type","application/json");_ = json.NewEncoder(w).Encode(struct{counter; ReportedUsage usageTotals}{v,usage});return
  }
  body,err:=io.ReadAll(http.MaxBytesReader(w,r.Body,p.MaxBodyBytes));if err!=nil{deny(413);return}
@@ -148,7 +152,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
   for k:=range payload{if strings.EqualFold(k,"max_output_tokens")&&k!="max_output_tokens"{deny(400);return}}
   output=p.MaxOutputTokens
   if raw,ok:=payload["max_output_tokens"];ok {
-   if json.Unmarshal(raw,&output)!=nil||output<=0||output>p.MaxOutputTokens{deny(400);return}
+   if json.Unmarshal(raw,&output)!=nil||output<=0||(g.backendMode!=""&&output<16)||output>p.MaxOutputTokens{deny(400);return}
   }
   payload["max_output_tokens"],_=json.Marshal(output)
  }
@@ -164,7 +168,8 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  defer func(){g.mu.Lock();g.active[p.ID]--;g.mu.Unlock()}()
  record:=auditRecord{Client:p.ID,Model:model,Event:"unknown",InputBytes:int64(len(body)),RequestedOutput:output}
  defer func(){record.At=time.Now().UTC();g.complete(record,admitted)}()
- ctx,cancel:=context.WithDeadline(r.Context(),p.Expires);defer cancel()
+ deadline:=time.Now().Add(15*time.Minute);if p.Expires.Before(deadline){deadline=p.Expires}
+ ctx,cancel:=context.WithDeadline(r.Context(),deadline);defer cancel()
  // Revalidate independently of the client during an active stream. Policy
  // removal, expiry, key rotation or unreadable configuration cancels it.
  go g.watchPolicy(ctx,cancel,p,key,model)
@@ -186,7 +191,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  w.Header().Set("Content-Type",resp.Header.Get("Content-Type"))
  w.WriteHeader(resp.StatusCode)
  buf:=make([]byte,32<<10)
- for {n,e:=resp.Body.Read(buf);if n>0{observer.feed(buf[:n]);if _,err=w.Write(buf[:n]);err!=nil{break};if f,ok:=w.(http.Flusher);ok{f.Flush()}};if e!=nil{clean=e==io.EOF;break}}
+ for {n,e:=resp.Body.Read(buf);if n>0{observer.feed(buf[:n]);_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15*time.Second));if _,err=w.Write(buf[:n]);err!=nil{break};if f,ok:=w.(http.Flusher);ok{f.Flush()}};if e!=nil{clean=e==io.EOF;break}}
  if clean&&resp.StatusCode>=200&&resp.StatusCode<300{record.Usage=observer.finish(true)}
  if record.Usage!=nil{record.Event="reported_usage"}else{record.Event="usage_unknown"}
  log.Printf("finished client=%q model=%q status=%d",p.ID,model,resp.StatusCode)
@@ -220,8 +225,8 @@ func main(){
  mode:=os.Getenv("T3_GATEWAY_BACKEND_MODE")
  if mode!="openai-api"&&mode!="isolated-cpa"{log.Fatal("explicit backend mode required: openai-api or isolated-cpa")}
  db,err:=bolt.Open(state,0600,&bolt.Options{Timeout:time.Second});if err!=nil{log.Fatal(err)};defer db.Close()
- g:=&gateway{configPath:path,backendKey:key,backendMode:mode,db:db,active:map[string]int{},client:&http.Client{Transport:&http.Transport{DisableKeepAlives:true},CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
+ g:=&gateway{configPath:path,backendKey:key,backendMode:mode,db:db,active:map[string]int{},client:&http.Client{Timeout:15*time.Minute,Transport:&http.Transport{DisableKeepAlives:true,TLSHandshakeTimeout:10*time.Second,ResponseHeaderTimeout:2*time.Minute},CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
  if _,err=g.load();err!=nil{log.Fatal(err)}
- s:=&http.Server{Addr:"127.0.0.1:8318",Handler:g,ReadHeaderTimeout:5*time.Second,ReadTimeout:30*time.Second,MaxHeaderBytes:16384}
+ s:=&http.Server{Addr:"127.0.0.1:8318",Handler:g,ReadHeaderTimeout:5*time.Second,ReadTimeout:30*time.Second,IdleTimeout:30*time.Second,WriteTimeout:16*time.Minute,MaxHeaderBytes:16384}
  log.Fatal(s.ListenAndServe())
 }
