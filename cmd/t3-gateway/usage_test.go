@@ -45,8 +45,12 @@ func TestReportedUsageAndAudit(t *testing.T){
  });err!=nil{t.Fatal(err)}
 }
 func TestBackendDestination(t *testing.T){
- g,_,_:=fixture(t)
+ g,c,_:=fixture(t)
  g.backendMode="openai-api"
+ c.Clients[0].MaxDailyInputBytes=100000
+ c.Clients[0].MaxOutputTokens=100
+ c.Clients[0].MaxDailyRequestedOutputTokens=1000
+ writePolicy(t,g,c)
  g.client.Transport=transportFunc(func(r *http.Request)(*http.Response,error){
   if r.URL.String()!="https://api.openai.com/v1/responses"{t.Error("unexpected destination")}
   return &http.Response{StatusCode:200,Header:http.Header{},Body:io.NopCloser(strings.NewReader("{}"))},nil
