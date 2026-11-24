@@ -37,3 +37,15 @@ func TestT3IsolatedConfig(t *testing.T){
   {"credential file",func(c *Config){if e:=os.WriteFile(filepath.Join(c.AuthDir,"token.json"),[]byte("{}"),0600);e!=nil{t.Fatal(e)}}},
  }{t.Run(tc.name,func(t *testing.T){c:=makeConfig();tc.mutate(c);if ValidateT3Isolated(c)==nil{t.Fatal("unsafe configuration accepted")}})}
 }
+
+func TestT3IsolatedDeploymentTemplate(t *testing.T){
+ t.Setenv("MANAGEMENT_PASSWORD","")
+ raw,e:=os.ReadFile(filepath.Join("..","..","deploy","t3-gateway","cpa-isolated.example.yaml"));if e!=nil{t.Fatal(e)}
+ dir:=t.TempDir()
+ authDir:=filepath.Join(dir,"auth");if e=os.Mkdir(authDir,0700);e!=nil{t.Fatal(e)}
+ path:=filepath.Join(dir,"config.yaml")
+ body:=strings.ReplaceAll(string(raw),"/etc/t3-cpa/empty-auth",authDir)
+ if e=os.WriteFile(path,[]byte(body),0600);e!=nil{t.Fatal(e)}
+ cfg,e:=LoadConfigOptional(path,false);if e!=nil{t.Fatal(e)}
+ if e=ValidateT3Isolated(cfg);e!=nil{t.Fatal(e)}
+}
