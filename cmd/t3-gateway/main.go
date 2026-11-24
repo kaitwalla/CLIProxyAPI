@@ -15,6 +15,7 @@ import (
  "os"
  "strings"
  "sync"
+ "sync/atomic"
  "time"
 
  bolt "go.etcd.io/bbolt"
@@ -40,6 +41,7 @@ type gateway struct {
  configPath, backendKey string
  db *bolt.DB
  mu sync.Mutex
+ accountingFailed atomic.Bool
  active map[string]int
  client *http.Client
 }
@@ -68,7 +70,8 @@ func (g *gateway) load() (config,error) {
  }
  return c,nil
 }
-func (g *gateway) admit(p policy, now time.Time, costs ...int64) error {
+func (g *gateway) admit(p policy, now time.Time, costs ...int64) error {return g.reserve(p,now,"",costs...)}
+func (g *gateway) reserve(p policy, now time.Time, model string, costs ...int64) error {
  var input,output int64
  if len(costs)==2 {input,output=costs[0],costs[1]}
  if input<0||output<0{return errors.New("invalid admission cost")}
@@ -85,7 +88,8 @@ func (g *gateway) admit(p policy, now time.Time, costs ...int64) error {
   v.InputBytes+=input;v.RequestedOutputTokens+=output
   v.Daily++;v.Recent++
   raw,err:=json.Marshal(v);if err!=nil{return err}
-  return b.Put([]byte(p.ID),raw)
+  if err=b.Put([]byte(p.ID),raw);err!=nil{return err}
+  return putAudit(tx,auditRecord{At:now.UTC(),Client:p.ID,Model:model,Event:"admitted",InputBytes:input,RequestedOutput:output})
  })
 }
 var errQuota=errors.New("quota exceeded")
@@ -108,12 +112,14 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  if p.ID==""||!time.Now().Before(p.Expires){deny(401);return}
  if monitor {
   var v counter
+  var usage usageTotals
   err=g.db.View(func(tx *bolt.Tx)error{
+   if b:=tx.Bucket([]byte("reported-usage"));b!=nil{if raw:=b.Get([]byte(p.ID+"\x00"+time.Now().UTC().Format("2006-01-02")));raw!=nil{if e:=json.Unmarshal(raw,&usage);e!=nil{return e}}}
    b:=tx.Bucket([]byte("admission"));if b==nil{return nil}
    raw:=b.Get([]byte(p.ID));if raw==nil{return nil};return json.Unmarshal(raw,&v)
   })
   if err!=nil{deny(503);return}
-  w.Header().Set("Content-Type","application/json");_ = json.NewEncoder(w).Encode(v);return
+  w.Header().Set("Content-Type","application/json");_ = json.NewEncoder(w).Encode(struct{counter; ReportedUsage usageTotals}{v,usage});return
  }
  body,err:=io.ReadAll(http.MaxBytesReader(w,r.Body,p.MaxBodyBytes));if err!=nil{deny(413);return}
  // Normalize the object before forwarding so downstream parsers cannot select
@@ -137,13 +143,16 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  }
  body,err=json.Marshal(payload);if err!=nil{deny(400);return}
  g.mu.Lock()
+ if g.accountingFailed.Load(){g.mu.Unlock();deny(503);return}
  if g.active[p.ID]>=p.Concurrent{g.mu.Unlock();deny(429);return}
- err=g.admit(p,time.Now(),int64(len(body)),output)
+ admitted:=time.Now()
+ err=g.reserve(p,admitted,model,int64(len(body)),output)
  if err!=nil{g.mu.Unlock();if errors.Is(err,errQuota){deny(429)}else{deny(503)};return}
  g.active[p.ID]++
  g.mu.Unlock()
  defer func(){g.mu.Lock();g.active[p.ID]--;g.mu.Unlock()}()
- log.Printf("admitted client=%q model=%q",p.ID,model)
+ record:=auditRecord{Client:p.ID,Model:model,Event:"unknown",InputBytes:int64(len(body)),RequestedOutput:output}
+ defer func(){record.At=time.Now().UTC();g.complete(record,admitted)}()
  ctx,cancel:=context.WithDeadline(r.Context(),p.Expires);defer cancel()
  // Revalidate independently of the client during an active stream. Policy
  // removal, expiry, key rotation or unreadable configuration cancels it.
@@ -156,12 +165,17 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  req.Header.Set("Content-Type","application/json")
  req.Header.Set("Accept","text/event-stream, application/json")
  resp,err:=g.client.Do(req)
- if err!=nil{log.Printf("upstream failed client=%q",p.ID);deny(502);return}
+ if err!=nil{record.Event="upstream_error";record.Status=502;deny(502);return}
  defer resp.Body.Close()
+ record.Status=resp.StatusCode
+ observer:=newUsageObserver(resp.Header.Get("Content-Type"))
+ clean:=false
  w.Header().Set("Content-Type",resp.Header.Get("Content-Type"))
  w.WriteHeader(resp.StatusCode)
  buf:=make([]byte,32<<10)
- for {n,e:=resp.Body.Read(buf);if n>0{if _,err=w.Write(buf[:n]);err!=nil{break};if f,ok:=w.(http.Flusher);ok{f.Flush()}};if e!=nil{break}}
+ for {n,e:=resp.Body.Read(buf);if n>0{observer.feed(buf[:n]);if _,err=w.Write(buf[:n]);err!=nil{break};if f,ok:=w.(http.Flusher);ok{f.Flush()}};if e!=nil{clean=e==io.EOF;break}}
+ if clean&&resp.StatusCode>=200&&resp.StatusCode<300{record.Usage=observer.finish(true)}
+ if record.Usage!=nil{record.Event="reported_usage"}else{record.Event="usage_unknown"}
  log.Printf("finished client=%q model=%q status=%d",p.ID,model,resp.StatusCode)
 }
 func (g *gateway) stillAllowed(original policy,key,model string) bool {
