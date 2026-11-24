@@ -30,9 +30,12 @@ type policy struct {
  RequestsPerMinute int
  Concurrent int
  MaxBodyBytes int64
+ MaxDailyInputBytes int64
+ MaxOutputTokens int64
+ MaxDailyRequestedOutputTokens int64
 }
 type config struct { Disabled bool; Clients []policy }
-type counter struct { Day string; Daily int; Minute string; Recent int }
+type counter struct { Day string; Daily int; Minute string; Recent int; InputBytes int64; RequestedOutputTokens int64 }
 type gateway struct {
  configPath, backendKey string
  db *bolt.DB
@@ -55,7 +58,7 @@ func (g *gateway) load() (config,error) {
  ids:=map[string]bool{}
  hashes:=map[string]bool{}
  for _,p:=range c.Clients {
-  if p.ID==""||ids[p.ID]||p.Expires.IsZero()||p.RequestsPerDay<=0||p.RequestsPerMinute<=0||p.Concurrent<=0||p.MaxBodyBytes<=0||p.MaxBodyBytes>32<<20||len(p.Models)==0{return c,errors.New("invalid client policy")}
+  if p.ID==""||ids[p.ID]||p.Expires.IsZero()||p.RequestsPerDay<=0||p.RequestsPerMinute<=0||p.Concurrent<=0||p.MaxBodyBytes<=0||p.MaxBodyBytes>32<<20||p.MaxDailyInputBytes<0||p.MaxOutputTokens<0||p.MaxDailyRequestedOutputTokens<0||(p.MaxDailyRequestedOutputTokens>0&&p.MaxOutputTokens==0)||len(p.Models)==0{return c,errors.New("invalid client policy")}
   ids[p.ID]=true
   for _,h:=range []string{p.KeyHash,p.MonitorHash}{
    raw,e:=hex.DecodeString(h)
@@ -65,15 +68,21 @@ func (g *gateway) load() (config,error) {
  }
  return c,nil
 }
-func (g *gateway) admit(p policy, now time.Time) error {
+func (g *gateway) admit(p policy, now time.Time, costs ...int64) error {
+ var input,output int64
+ if len(costs)==2 {input,output=costs[0],costs[1]}
+ if input<0||output<0{return errors.New("invalid admission cost")}
  return g.db.Update(func(tx *bolt.Tx)error{
   b,err:=tx.CreateBucketIfNotExists([]byte("admission"));if err!=nil{return err}
   var v counter
   if raw:=b.Get([]byte(p.ID));raw!=nil {if err=json.Unmarshal(raw,&v);err!=nil{return err}}
   day:=now.UTC().Format("2006-01-02"); minute:=now.UTC().Format("2006-01-02T15:04")
-  if v.Day!=day {v.Day=day;v.Daily=0}
+  if v.Day!=day {v.Day=day;v.Daily=0;v.InputBytes=0;v.RequestedOutputTokens=0}
   if v.Minute!=minute{v.Minute=minute;v.Recent=0}
   if v.Daily>=p.RequestsPerDay||v.Recent>=p.RequestsPerMinute{return errQuota}
+  if (p.MaxDailyInputBytes>0 && input>p.MaxDailyInputBytes-v.InputBytes)||(p.MaxDailyRequestedOutputTokens>0&&output>p.MaxDailyRequestedOutputTokens-v.RequestedOutputTokens){return errQuota}
+  if input>int64(^uint64(0)>>1)-v.InputBytes||output>int64(^uint64(0)>>1)-v.RequestedOutputTokens{return errQuota}
+  v.InputBytes+=input;v.RequestedOutputTokens+=output
   v.Daily++;v.Recent++
   raw,err:=json.Marshal(v);if err!=nil{return err}
   return b.Put([]byte(p.ID),raw)
@@ -117,10 +126,19 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  allowed:=false
  for _,m:=range p.Models{if m==model{allowed=true}}
  if !allowed{deny(403);return}
+ var output int64
+ if p.MaxOutputTokens>0 {
+  for k:=range payload{if strings.EqualFold(k,"max_output_tokens")&&k!="max_output_tokens"{deny(400);return}}
+  output=p.MaxOutputTokens
+  if raw,ok:=payload["max_output_tokens"];ok {
+   if json.Unmarshal(raw,&output)!=nil||output<=0||output>p.MaxOutputTokens{deny(400);return}
+  }
+  payload["max_output_tokens"],_=json.Marshal(output)
+ }
  body,err=json.Marshal(payload);if err!=nil{deny(400);return}
  g.mu.Lock()
  if g.active[p.ID]>=p.Concurrent{g.mu.Unlock();deny(429);return}
- err=g.admit(p,time.Now())
+ err=g.admit(p,time.Now(),int64(len(body)),output)
  if err!=nil{g.mu.Unlock();if errors.Is(err,errQuota){deny(429)}else{deny(503)};return}
  g.active[p.ID]++
  g.mu.Unlock()
