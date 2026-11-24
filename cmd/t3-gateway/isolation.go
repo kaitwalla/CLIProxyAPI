@@ -56,11 +56,11 @@ func uniqueJSON(b []byte) bool{
 func restrictPayload(p map[string]json.RawMessage)bool{
  for k:=range p {
   switch strings.ToLower(k){
-  case "previous_response_id","conversation","background","store","service_tier","tools":
+  case "previous_response_id","conversation","prompt","background","store","service_tier","tools":
    if k!=strings.ToLower(k){return false}
   }
  }
- for _,k:=range []string{"previous_response_id","conversation"}{
+ for _,k:=range []string{"previous_response_id","conversation","prompt"}{
   if _,ok:=p[k];ok{return false}
  }
  for _,k:=range []string{"background","store"}{
@@ -72,7 +72,7 @@ func restrictPayload(p map[string]json.RawMessage)bool{
  }
  if raw,ok:=p["service_tier"];ok{
   var tier string
-  if json.Unmarshal(raw,&tier)!=nil||tier!="default"{return false}
+  if json.Unmarshal(raw,&tier)!=nil||(tier!="default"&&tier!="auto"){return false}
  }
  p["service_tier"]=json.RawMessage(`"default"`)
  if raw,ok:=p["tools"];ok{
