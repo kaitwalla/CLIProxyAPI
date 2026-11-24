@@ -34,6 +34,8 @@ type policy struct {
  MaxDailyInputBytes int64
  MaxOutputTokens int64
  MaxDailyRequestedOutputTokens int64
+ MaxDailyReportedTokens int64
+ RequireReportedUsage bool
 }
 type config struct { Disabled bool; Clients []policy }
 type counter struct { Day string; Daily int; Minute string; Recent int; InputBytes int64; RequestedOutputTokens int64 }
@@ -61,7 +63,8 @@ func (g *gateway) load() (config,error) {
  ids:=map[string]bool{}
  hashes:=map[string]bool{}
  for _,p:=range c.Clients {
-  if p.ID==""||strings.ContainsRune(p.ID,0)||ids[p.ID]||p.Expires.IsZero()||p.RequestsPerDay<=0||p.RequestsPerMinute<=0||p.Concurrent<=0||p.MaxBodyBytes<=0||p.MaxBodyBytes>32<<20||p.MaxDailyInputBytes<0||p.MaxOutputTokens<0||p.MaxDailyRequestedOutputTokens<0||(p.MaxDailyRequestedOutputTokens>0&&p.MaxOutputTokens==0)||len(p.Models)==0{return c,errors.New("invalid client policy")}
+  if p.ID==""||strings.ContainsRune(p.ID,0)||ids[p.ID]||p.Expires.IsZero()||p.RequestsPerDay<=0||p.RequestsPerMinute<=0||p.Concurrent<=0||p.MaxBodyBytes<=0||p.MaxBodyBytes>32<<20||p.MaxDailyInputBytes<0||p.MaxOutputTokens<0||p.MaxDailyRequestedOutputTokens<0||p.MaxDailyReportedTokens<0||(p.MaxDailyRequestedOutputTokens>0&&p.MaxOutputTokens==0)||len(p.Models)==0{return c,errors.New("invalid client policy")}
+  if g.backendMode!=""&&(p.MaxDailyInputBytes<=0||p.MaxOutputTokens<=0||p.MaxDailyRequestedOutputTokens<=0){return c,errors.New("production policy requires positive input and output admission limits")}
   ids[p.ID]=true
   for _,h:=range []string{p.KeyHash,p.MonitorHash}{
    raw,e:=hex.DecodeString(h)
@@ -83,6 +86,12 @@ func (g *gateway) reserve(p policy, now time.Time, model string, costs ...int64)
   day:=now.UTC().Format("2006-01-02"); minute:=now.UTC().Format("2006-01-02T15:04")
   if v.Day!=day {v.Day=day;v.Daily=0;v.InputBytes=0;v.RequestedOutputTokens=0}
   if v.Minute!=minute{v.Minute=minute;v.Recent=0}
+  if p.MaxDailyReportedTokens>0||p.RequireReportedUsage {
+   var u usageTotals
+   if ub:=tx.Bucket([]byte("reported-usage"));ub!=nil{if raw:=ub.Get([]byte(p.ID+"\x00"+day));raw!=nil{if err=json.Unmarshal(raw,&u);err!=nil{return err}}}
+   if p.RequireReportedUsage&&(u.Unknown>0||int64(v.Daily)>u.Known+u.Unknown+int64(g.active[p.ID])){return errQuota}
+   if p.MaxDailyReportedTokens>0&&(u.Input>=p.MaxDailyReportedTokens||u.Output>=p.MaxDailyReportedTokens-u.Input){return errQuota}
+  }
   if v.Daily>=p.RequestsPerDay||v.Recent>=p.RequestsPerMinute{return errQuota}
   if (p.MaxDailyInputBytes>0 && input>p.MaxDailyInputBytes-v.InputBytes)||(p.MaxDailyRequestedOutputTokens>0&&output>p.MaxDailyRequestedOutputTokens-v.RequestedOutputTokens){return errQuota}
   if input>int64(^uint64(0)>>1)-v.InputBytes||output>int64(^uint64(0)>>1)-v.RequestedOutputTokens{return errQuota}
@@ -133,6 +142,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  allowed:=false
  for _,m:=range p.Models{if m==model{allowed=true}}
  if !allowed{deny(403);return}
+ if g.backendMode!=""&&!restrictPayload(payload){deny(403);return}
  var output int64
  if p.MaxOutputTokens>0 {
   for k:=range payload{if strings.EqualFold(k,"max_output_tokens")&&k!="max_output_tokens"{deny(400);return}}
@@ -159,6 +169,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  // removal, expiry, key rotation or unreadable configuration cancels it.
  go g.watchPolicy(ctx,cancel,p,key,model)
  if !g.stillAllowed(p,key,model){deny(403);return}
+ if g.backendMode=="isolated-cpa"&&!g.backendReady(ctx){record.Event="backend_not_isolated";record.Status=503;deny(503);return}
  // Backend destinations are fixed, never supplied by the client.
  req,err:=http.NewRequestWithContext(ctx,"POST",g.backendURL(),bytes.NewReader(body))
  if err!=nil{deny(503);return}
@@ -168,6 +179,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  resp,err:=g.client.Do(req)
  if err!=nil{record.Event="upstream_error";record.Status=502;deny(502);return}
  defer resp.Body.Close()
+ if g.backendMode=="isolated-cpa"&&resp.Header.Get("X-CPA-T3-Isolated")!="api-key-v1"{record.Event="backend_not_isolated";record.Status=502;deny(502);return}
  record.Status=resp.StatusCode
  observer:=newUsageObserver(resp.Header.Get("Content-Type"))
  clean:=false
