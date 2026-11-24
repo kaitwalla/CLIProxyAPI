@@ -254,9 +254,15 @@ func TestHubExchange_ManyToManyFullDuplexMultiplexing(t *testing.T) {
 	clientWriteMu := make([]sync.Mutex, numPeers)
 	for c := 0; c < numPeers; c++ {
 		clients[c] = dialRole(t, srv.URL, "key-mesh", RoleClient, fmt.Sprintf("cli-%d", c), fmt.Sprintf("Client %d", c))
+		waitServersVisible(t, clients[c], "srv-0", "srv-1", "srv-2")
+		if err := clients[c].WriteMessage(websocket.TextMessage, []byte(`{"type":"list_servers","request_id":"mesh-ready"}`)); err != nil {
+			t.Fatal(err)
+		}
 		initList := readTextJSONFrame(t, clients[c])
-		if initList.Get("servers.#").Int() != numPeers {
-			t.Fatalf("client %d saw %d servers, want %d", c, initList.Get("servers.#").Int(), numPeers)
+		if initList.Get("type").String() != ControlTypeServerList ||
+			initList.Get("request_id").String() != "mesh-ready" ||
+			initList.Get("servers.#").Int() != numPeers {
+			t.Fatalf("client %d unexpected mesh topology: %s", c, initList.Raw)
 		}
 	}
 
