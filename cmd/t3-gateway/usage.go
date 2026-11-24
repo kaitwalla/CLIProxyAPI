@@ -90,11 +90,13 @@ func putAudit(tx *bolt.Tx,a auditRecord)error{
 }
 func (g *gateway) complete(a auditRecord,admitted time.Time){
  e:=g.db.Update(func(tx *bolt.Tx)error{
+  if a.Usage!=nil&&a.RequestedOutput>0&&a.Usage.Output>a.RequestedOutput{a.Event="output_cap_violation"}
   if e:=putAudit(tx,a);e!=nil{return e}
   b,e:=tx.CreateBucketIfNotExists([]byte("reported-usage"));if e!=nil{return e}
   key:=[]byte(a.Client+"\x00"+admitted.UTC().Format("2006-01-02"))
   var v usageTotals
   if raw:=b.Get(key);raw!=nil{if e=json.Unmarshal(raw,&v);e!=nil{return e}}
+  if a.Event=="output_cap_violation"{v.CapViolations++}
   if a.Usage==nil{v.Unknown++}else{
    max:=int64(^uint64(0)>>1)
    if a.Usage.Input>max-v.Input||a.Usage.Output>max-v.Output{return io.ErrShortBuffer}
@@ -104,4 +106,4 @@ func (g *gateway) complete(a auditRecord,admitted time.Time){
  })
  if e!=nil{g.accountingFailed.Store(true);log.Print("gateway completion accounting failed; admissions suspended")}
 }
-type usageTotals struct{Input int64;Output int64;Known int64;Unknown int64}
+type usageTotals struct{Input int64;Output int64;Known int64;Unknown int64;CapViolations int64}
