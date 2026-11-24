@@ -16,6 +16,10 @@ func validateT3Outbound(cfg *config.Config,auth *cliproxyauth.Auth,key,baseURL s
  if config.ValidateT3Isolated(cfg)!=nil||auth==nil||!codexAuthUsesAPIKey(auth)||baseURL!="https://api.openai.com/v1"||subtle.ConstantTimeCompare([]byte(key),[]byte(cfg.CodexKey[0].APIKey))!=1 {
   return errors.New("isolated CPA rejected upstream credential or destination")
  }
+ return validateT3Wire(cfg,original,final)
+}
+
+func validateT3Wire(cfg *config.Config, original,final []byte) error {
  type tool struct{Type string `json:"type"`}
  type payload struct{
   Model string `json:"model"`
