@@ -28,7 +28,7 @@ func ValidateT3Isolated(c *Config) error {
   return errors.New("isolated CPA requires direct official OpenAI API credentials and no alternate routes")
  }
  for _,m:=range k.Models {
-  if m.Name==""||strings.ContainsAny(m.Name,"/*() \\t\\r\\n")||(m.Alias!=""&&m.Alias!=m.Name)||m.IsCompat||m.ForceMapping||m.SupportConfigurationUpdate{return errors.New("isolated CPA requires exact model names")}
+  if m.Name==""||strings.ContainsAny(m.Name,"/*() \t\r\n")||(m.Alias!=""&&m.Alias!=m.Name)||m.IsCompat||m.ForceMapping||m.SupportConfigurationUpdate{return errors.New("isolated CPA requires exact model names")}
  }
  // OAuth credential discovery must have no files to load. Use a separately
  // mounted, read-only empty directory, not the user's ordinary auth directory.
