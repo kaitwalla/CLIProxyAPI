@@ -146,3 +146,34 @@ func TestStorageFailureDeniesInference(t *testing.T){
  if w:=request(g,"POST","/v1/responses","inference",validBody);w.Code!=503{t.Fatal("storage failure did not fail closed")}
  if calls.Load()!=0{t.Fatal("storage failure reached upstream")}
 }
+
+func TestActiveRevocation(t *testing.T) {
+ for _,mode:=range []string{"disabled","removed","rotated","model","expired","invalid"} {
+  t.Run(mode,func(t *testing.T){
+   g,c,_:=fixture(t)
+   entered:=make(chan struct{})
+   cancelled:=make(chan struct{})
+   g.client.Transport=transportFunc(func(r *http.Request)(*http.Response,error){
+    close(entered)
+    <-r.Context().Done()
+    close(cancelled)
+    return nil,r.Context().Err()
+   })
+   done:=make(chan int,1)
+   go func(){done<-request(g,"POST","/v1/responses","inference",validBody).Code}()
+   select{case <-entered:case <-time.After(5*time.Second):t.Fatal("upstream not reached")}
+   switch mode {
+   case "disabled":c.Disabled=true
+   case "removed":c.Clients=nil
+   case "rotated":c.Clients[0].KeyHash=digest("rotated")
+   case "model":c.Clients[0].Models=[]string{"other"}
+   case "expired":c.Clients[0].Expires=time.Now().Add(-time.Second)
+   case "invalid":c.Clients[0].Concurrent=0
+   }
+   writePolicy(t,g,c)
+   select{case <-cancelled:case <-time.After(3*time.Second):t.Fatal("upstream context not cancelled")}
+   select{case status:=<-done:if status!=502{t.Errorf("status=%d",status)};case <-time.After(3*time.Second):t.Fatal("handler did not finish")}
+   if g.active["desktop"]!=0{t.Fatal("concurrency slot leaked")}
+  })
+ }
+}
