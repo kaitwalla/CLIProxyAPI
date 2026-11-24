@@ -1,0 +1,32 @@
+[Unit]
+Description=Restricted T3 inference gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=t3-gateway
+Group=t3-gateway
+UMask=0077
+StateDirectory=t3-gateway
+Environment=T3_GATEWAY_CONFIG=/etc/t3-gateway/policy.json
+Environment=T3_GATEWAY_DB=/var/lib/t3-gateway/state.db
+EnvironmentFile=/etc/t3-gateway/backend.env
+ExecStart=/usr/local/bin/t3-gateway
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
