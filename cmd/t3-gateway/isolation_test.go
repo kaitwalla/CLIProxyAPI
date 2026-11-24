@@ -103,3 +103,17 @@ func TestT3HTTPStreamingEndToEnd(t *testing.T){
  defer resp.Body.Close()
  body,e:=io.ReadAll(resp.Body);if e!=nil||resp.StatusCode!=200||string(body)!=frame{t.Fatalf("bad stream: %d %q %v",resp.StatusCode,body,e)}
 }
+
+func TestT3OutputCapViolationAndDiscovery(t *testing.T){
+ g,_,calls:=productionFixture(t,"openai-api")
+ g.client.Transport=transportFunc(func(*http.Request)(*http.Response,error){
+  calls.Add(1)
+  return &http.Response{StatusCode:200,Header:http.Header{"Content-Type":{"application/json"}},Body:io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":3,"output_tokens":101,"total_tokens":104}}`))},nil
+ })
+ if w:=request(g,"GET","/v1/models","inference","");w.Code!=200||!strings.Contains(w.Body.String(),"allowed"){t.Fatal("model discovery failed")}
+ if w:=request(g,"GET","/v1/models","monitor","");w.Code!=401{t.Fatal("monitor key exposed inference models")}
+ if calls.Load()!=0{t.Fatal("model discovery contacted provider")}
+ if w:=request(g,"POST","/v1/responses","inference",validBody);w.Code!=200{t.Fatal(w.Code)}
+ if w:=request(g,"POST","/v1/responses","inference",validBody);w.Code!=429{t.Fatal("cap violation did not suspend inference")}
+ if calls.Load()!=1{t.Fatal("unexpected provider calls")}
+}
