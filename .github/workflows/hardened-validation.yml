@@ -66,69 +66,9 @@ jobs:
       - name: Repeated timing regression tests
         run: |
           go test ./internal/api -run '^TestServerWebsocketTunnel_EndToEndAndTenantIsolation$' -count=20
-          go test ./sdk/cliproxy -run '^TestServiceHeartbeatFailoverDoesNotDrainBlockingScope
-
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Validate Compose configuration
-        run: docker compose config --quiet
-      - name: Build hardened image
-        run: docker build -t cpa-validation .
-      - name: Verify runtime identity and bundled frontend
-        run: |
-          docker run --rm --entrypoint sh cpa-validation -ec '
-            test "$(id -u)" = 10001
-            test -r "$MANAGEMENT_STATIC_PATH"
-            echo "30df9503402af03e04affb55920458c13139a07757c8428fc845299876d19c43  $MANAGEMENT_STATIC_PATH" | sha256sum -c -
-          '
- -count=10
-          go test ./internal/wstunnel -run '^TestHubExchange_ManyToManyFullDuplexMultiplexing
-
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Validate Compose configuration
-        run: docker compose config --quiet
-      - name: Build hardened image
-        run: docker build -t cpa-validation .
-      - name: Verify runtime identity and bundled frontend
-        run: |
-          docker run --rm --entrypoint sh cpa-validation -ec '
-            test "$(id -u)" = 10001
-            test -r "$MANAGEMENT_STATIC_PATH"
-            echo "30df9503402af03e04affb55920458c13139a07757c8428fc845299876d19c43  $MANAGEMENT_STATIC_PATH" | sha256sum -c -
-          '
- -count=20
-          go test ./sdk/api/handlers/openai -run '^TestResponsesWebsocketSameSessionLaterCreate429DoesNotReplayAfterDownstreamCommit
-
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Validate Compose configuration
-        run: docker compose config --quiet
-      - name: Build hardened image
-        run: docker build -t cpa-validation .
-      - name: Verify runtime identity and bundled frontend
-        run: |
-          docker run --rm --entrypoint sh cpa-validation -ec '
-            test "$(id -u)" = 10001
-            test -r "$MANAGEMENT_STATIC_PATH"
-            echo "30df9503402af03e04affb55920458c13139a07757c8428fc845299876d19c43  $MANAGEMENT_STATIC_PATH" | sha256sum -c -
-          '
- -count=30
+          go test ./sdk/cliproxy -run '^TestServiceHeartbeatFailoverDoesNotDrainBlockingScope$' -count=10
+          go test ./internal/wstunnel -run '^TestHubExchange_ManyToManyFullDuplexMultiplexing$' -count=20
+          go test ./sdk/api/handlers/openai -run '^TestResponsesWebsocketSameSessionLaterCreate429DoesNotReplayAfterDownstreamCommit$' -count=30
 
   docker:
     runs-on: ubuntu-latest
