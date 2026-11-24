@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,14 +33,21 @@ func TestIssue6825StreamToolIndicesAcrossChunks(t *testing.T) {
 		`{"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_time","args":{"tz":"America/Santiago"}}},{"functionCall":{"name":"get_time","args":{"tz":"Asia/Tokyo"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}}`,
 	}
 	var param any
-	var indices []int64
-	var arguments []string
+	var calls issue6825StreamCalls
 	for _, chunk := range chunks {
 		for _, out := range sdktranslator.TranslateStream(context.Background(), sdktranslator.FormatAntigravity, sdktranslator.FormatOpenAI, "gemini-3-flash", original, translated, []byte(chunk), &param) {
 			for _, call := range ojson.GetBytes(out, "choices.0.delta.tool_calls").Array() {
-				indices = append(indices, call.Get("index").Int())
-				arguments = append(arguments, call.Get("function.arguments").String())
+				calls.add(t, call)
 			}
+		}
+	}
+	var indices []int64
+	var arguments []string
+	for i, call := range calls.complete(t) {
+		indices = append(indices, int64(i))
+		arguments = append(arguments, call.Function.Arguments)
+		if call.Function.Name != "get_time" {
+			t.Fatalf("unexpected tool name: %q", call.Function.Name)
 		}
 	}
 	if want := []int64{0, 1, 2}; !reflect.DeepEqual(indices, want) {
@@ -48,6 +56,64 @@ func TestIssue6825StreamToolIndicesAcrossChunks(t *testing.T) {
 	if want := []string{`{"tz":"UTC"}`, `{"tz":"America/Santiago"}`, `{"tz":"Asia/Tokyo"}`}; !reflect.DeepEqual(arguments, want) {
 		t.Errorf("tool arguments = %v, want %v", arguments, want)
 	}
+}
+
+// Chat Completions streams identify a call by index and may send its JSON
+// arguments in multiple deltas. Assemble the calls as a real client would.
+type issue6825StreamCall struct {
+	ID string `json:"id"`
+	Type string `json:"type"`
+	Function struct {
+		Name string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type issue6825StreamCalls []issue6825StreamCall
+
+func (calls *issue6825StreamCalls) add(t *testing.T, delta ojson.Result) {
+	t.Helper()
+	index := delta.Get("index")
+	i := int(index.Int())
+	if !index.Exists() || i < 0 || i > len(*calls) {
+		t.Fatalf("invalid tool call index: %s", delta.Raw)
+	}
+	if i == len(*calls) {
+		id, name := delta.Get("id").String(), delta.Get("function.name").String()
+		if id == "" || name == "" || delta.Get("type").String() != "function" {
+			t.Fatalf("new tool call missing identity: %s", delta.Raw)
+		}
+		for _, prior := range *calls {
+			if prior.ID == id {
+				t.Fatalf("duplicate tool identity at distinct index: %q", id)
+			}
+		}
+		call := issue6825StreamCall{ID: id, Type: "function"}
+		call.Function.Name = name
+		*calls = append(*calls, call)
+	}
+	call := &(*calls)[i]
+	if id := delta.Get("id").String(); id != "" && id != call.ID {
+		t.Fatalf("tool call identity changed at index %d: %s", i, delta.Raw)
+	}
+	if name := delta.Get("function.name").String(); name != "" && name != call.Function.Name {
+		t.Fatalf("tool name changed at index %d: %s", i, delta.Raw)
+	}
+	if kind := delta.Get("type").String(); kind != "" && kind != "function" {
+		t.Fatalf("unexpected tool type: %s", delta.Raw)
+	}
+	call.Function.Arguments += delta.Get("function.arguments").String()
+}
+
+func (calls issue6825StreamCalls) complete(t *testing.T) []issue6825StreamCall {
+	t.Helper()
+	for i, call := range calls {
+		var args map[string]any
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil || args == nil {
+			t.Fatalf("invalid reconstructed arguments at index %d: %q", i, call.Function.Arguments)
+		}
+	}
+	return calls
 }
 
 // issue6825Conversation keeps translation, request preparation and replay real;
@@ -128,7 +194,7 @@ func (c *issue6825Conversation) callWithContext(ctx context.Context, payload []b
 		c.t.Fatalf("ExecuteStream: %v", errExecute)
 	}
 	message := []byte(`{"role":"assistant"}`)
-	var calls []map[string]any
+	var calls issue6825StreamCalls
 	var content, reasoning string
 	for chunk := range response.Chunks {
 		if chunk.Err != nil {
@@ -140,17 +206,13 @@ func (c *issue6825Conversation) callWithContext(ctx context.Context, payload []b
 			content += delta.Get("content").String()
 			reasoning += delta.Get("reasoning_content").String()
 			for _, call := range delta.Get("tool_calls").Array() {
-				index := int(call.Get("index").Int())
-				if index != len(calls) {
-					c.t.Fatalf("unexpected new tool index %d, want %d", index, len(calls))
-				}
-				calls = append(calls, map[string]any{"id": call.Get("id").String(), "type": "function", "function": map[string]string{"name": call.Get("function.name").String(), "arguments": call.Get("function.arguments").String()}})
+				calls.add(c.t, call)
 			}
 		}
 	}
 	msgDoc := ojson.NewDoc(message)
 	if len(calls) > 0 {
-		_ = msgDoc.Set("tool_calls", calls)
+		_ = msgDoc.Set("tool_calls", calls.complete(c.t))
 	}
 	if content != "" {
 		_ = msgDoc.Set("content", content)
