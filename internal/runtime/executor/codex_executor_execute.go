@@ -210,6 +210,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	if errFinal := sessionInstructions.CheckFinal(upstreamBody); errFinal != nil {
 		return resp, errFinal
 	}
+	if errIsolated := validateT3Outbound(e.cfg, auth, apiKey, baseURL, originalPayloadSource, upstreamBody); errIsolated != nil {
+		return resp, statusErr{code: http.StatusForbidden, msg: errIsolated.Error()}
+	}
 	body = upstreamBody
 	upstreamModel := strings.TrimSpace(doc.Get("model").String())
 	if upstreamModel != "" && upstreamModel != baseModel {
