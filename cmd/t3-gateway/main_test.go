@@ -177,3 +177,35 @@ func TestActiveRevocation(t *testing.T) {
   })
  }
 }
+
+func TestRequestedOutputBudget(t *testing.T){
+ g,c,calls:=fixture(t)
+ c.Clients[0].MaxOutputTokens=100
+ c.Clients[0].MaxDailyRequestedOutputTokens=150
+ writePolicy(t,g,c)
+ g.client.Transport=transportFunc(func(r *http.Request)(*http.Response,error){
+  calls.Add(1)
+  var body map[string]json.RawMessage
+  if err:=json.NewDecoder(r.Body).Decode(&body);err!=nil{t.Error(err)}
+  var n int
+  if err:=json.Unmarshal(body["max_output_tokens"],&n);err!=nil||n!=100{t.Errorf("output cap not injected: %d",n)}
+  return &http.Response{StatusCode:200,Header:http.Header{},Body:io.NopCloser(strings.NewReader("{}"))},nil
+ })
+ for _,b:=range []string{`{"model":"allowed","max_output_tokens":101}`,`{"model":"allowed","max_output_tokens":-1}`,`{"model":"allowed","Max_Output_Tokens":1000}`,`{"model":"allowed","max_output_tokens":1.5}`}{
+  if w:=request(g,"POST","/v1/responses","inference",b);w.Code!=400{t.Errorf("invalid output limit accepted: %s",b)}
+ }
+ if w:=request(g,"POST","/v1/responses","inference",validBody);w.Code!=200{t.Fatal(w.Code)}
+ if w:=request(g,"POST","/v1/responses","inference",validBody);w.Code!=429{t.Fatal("daily output budget bypass")}
+ if calls.Load()!=1{t.Fatal("unexpected upstream calls")}
+}
+func TestInputBudgetAndAtomicReservation(t *testing.T){
+ g,c,_:=fixture(t);p:=c.Clients[0]
+ p.MaxDailyInputBytes=100;p.MaxDailyRequestedOutputTokens=100;p.MaxOutputTokens=50
+ now:=time.Now()
+ var wg sync.WaitGroup;var successes atomic.Int32
+ for i:=0;i<32;i++{wg.Add(1);go func(){defer wg.Done();e:=g.admit(p,now,40,40);if e==nil{successes.Add(1)}else if !errors.Is(e,errQuota){t.Error(e)}}()}
+ wg.Wait();if successes.Load()!=2{t.Fatalf("admitted %d",successes.Load())}
+ if e:=g.admit(p,now,21,1);!errors.Is(e,errQuota){t.Fatal("input budget bypass")}
+ if e:=g.admit(p,now,1,21);!errors.Is(e,errQuota){t.Fatal("output budget bypass")}
+ if e:=g.admit(p,now.Add(24*time.Hour),100,100);e!=nil{t.Fatal(e)}
+}
