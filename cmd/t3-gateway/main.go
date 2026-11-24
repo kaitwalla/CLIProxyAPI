@@ -127,6 +127,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  defer func(){g.mu.Lock();g.active[p.ID]--;g.mu.Unlock()}()
  log.Printf("admitted client=%q model=%q",p.ID,model)
  ctx,cancel:=context.WithDeadline(r.Context(),p.Expires);defer cancel()
+ // Revalidate independently of the client during an active stream. Policy
+ // removal, expiry, key rotation or unreadable configuration cancels it.
+ go g.watchPolicy(ctx,cancel,p,key,model)
+ if !g.stillAllowed(p,key,model){deny(403);return}
  // The backend is deliberately fixed to the local CPA listener.
  req,err:=http.NewRequestWithContext(ctx,"POST","http://127.0.0.1:8317/v1/responses",bytes.NewReader(body))
  if err!=nil{deny(503);return}
@@ -141,6 +145,25 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  buf:=make([]byte,32<<10)
  for {n,e:=resp.Body.Read(buf);if n>0{if _,err=w.Write(buf[:n]);err!=nil{break};if f,ok:=w.(http.Flusher);ok{f.Flush()}};if e!=nil{break}}
  log.Printf("finished client=%q model=%q status=%d",p.ID,model,resp.StatusCode)
+}
+func (g *gateway) stillAllowed(original policy,key,model string) bool {
+ c,err:=g.load()
+ if err!=nil||c.Disabled{return false}
+ for _,p:=range c.Clients {
+  if p.ID!=original.ID||!matches(key,p.KeyHash)||!time.Now().Before(p.Expires){continue}
+  for _,m:=range p.Models{if m==model{return true}}
+ }
+ return false
+}
+func (g *gateway) watchPolicy(ctx context.Context,cancel context.CancelFunc,p policy,key,model string){
+ ticker:=time.NewTicker(250*time.Millisecond);defer ticker.Stop()
+ for {
+  select {
+  case <-ctx.Done():return
+  case <-ticker.C:
+   if !g.stillAllowed(p,key,model){cancel();return}
+  }
+ }
 }
 func main(){
  path:=os.Getenv("T3_GATEWAY_CONFIG"); state:=os.Getenv("T3_GATEWAY_DB"); key:=os.Getenv("T3_GATEWAY_BACKEND_KEY")
