@@ -150,12 +150,27 @@ func TestServerWebsocketTunnel_EndToEndAndTenantIsolation(t *testing.T) {
 	_ = dialServerTunnelWithType(t, httpSrv.URL, "tenant-b", wstunnel.RoleServer, "srv-b1", "Server B1", "cpa-cloud")
 
 	cliA := dialServerTunnel(t, httpSrv.URL, "tenant-a", wstunnel.RoleClient, "cli-a1", "Client A1")
+	// A successful WebSocket handshake precedes server registration. The
+	// initial snapshot may therefore be empty, followed by server_online.
 	initList := readServerTunnelJSON(t, cliA)
-	if initList.Get("type").String() != wstunnel.ControlTypeServerList ||
-		initList.Get("servers.#").Int() != 1 ||
-		initList.Get("servers.0.uuid").String() != "srv-a1" ||
-		initList.Get("servers.0.type").String() != "cpa-desktop" {
+	if initList.Get("type").String() != wstunnel.ControlTypeServerList {
 		t.Fatalf("unexpected initial server_list: %s", initList.Raw)
+	}
+	switch initList.Get("servers.#").Int() {
+	case 0:
+		online := readServerTunnelJSON(t, cliA)
+		if online.Get("type").String() != wstunnel.ControlTypeServerOnline ||
+			online.Get("server.uuid").String() != "srv-a1" ||
+			online.Get("server.type").String() != "cpa-desktop" {
+			t.Fatalf("unexpected registration event: %s", online.Raw)
+		}
+	case 1:
+		if initList.Get("servers.0.uuid").String() != "srv-a1" ||
+			initList.Get("servers.0.type").String() != "cpa-desktop" {
+			t.Fatalf("unexpected initial server: %s", initList.Raw)
+		}
+	default:
+		t.Fatalf("unexpected initial server_list (tenant isolation): %s", initList.Raw)
 	}
 
 	srvA2 := dialServerTunnelWithType(t, httpSrv.URL, "tenant-a", wstunnel.RoleServer, "srv-a2", "Server A2", "build-runner")
