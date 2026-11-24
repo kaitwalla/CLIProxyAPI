@@ -135,7 +135,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  // Normalize the object before forwarding so downstream parsers cannot select
  // a different value from duplicate keys. Reject case variants of model.
  var payload map[string]json.RawMessage
- if json.Unmarshal(body,&payload)!=nil||payload==nil{deny(400);return}
+ if !uniqueJSON(body)||json.Unmarshal(body,&payload)!=nil||payload==nil{deny(400);return}
  for k:=range payload {if strings.EqualFold(k,"model")&&k!="model"{deny(400);return}}
  var model string
  if json.Unmarshal(payload["model"],&model)!=nil{deny(400);return}
