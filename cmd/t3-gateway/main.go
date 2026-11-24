@@ -88,9 +88,10 @@ func (g *gateway) reserve(p policy, now time.Time, model string, costs ...int64)
   day:=now.UTC().Format("2006-01-02"); minute:=now.UTC().Format("2006-01-02T15:04")
   if v.Day!=day {v.Day=day;v.Daily=0;v.InputBytes=0;v.RequestedOutputTokens=0}
   if v.Minute!=minute{v.Minute=minute;v.Recent=0}
-  if p.MaxDailyReportedTokens>0||p.RequireReportedUsage {
+  {
    var u usageTotals
    if ub:=tx.Bucket([]byte("reported-usage"));ub!=nil{if raw:=ub.Get([]byte(p.ID+"\x00"+day));raw!=nil{if err=json.Unmarshal(raw,&u);err!=nil{return err}}}
+   if u.CapViolations>0{return errQuota}
    if p.RequireReportedUsage&&(u.Unknown>0||int64(v.Daily)!=u.Known+u.Unknown){return errQuota}
    if p.MaxDailyReportedTokens>0&&(u.Input>=p.MaxDailyReportedTokens||u.Output>=p.MaxDailyReportedTokens-u.Input){return errQuota}
   }
@@ -111,7 +112,8 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
  if r.URL.RawQuery!=""||r.URL.ForceQuery||r.URL.RawPath!=""||r.Header.Get("Upgrade")!=""{deny(403);return}
  inference:=r.Method=="POST"&&r.URL.Path=="/v1/responses"
  monitor:=r.Method=="GET"&&r.URL.Path=="/usage"
- if !inference&&!monitor{deny(404);return}
+ discovery:=r.Method=="GET"&&r.URL.Path=="/v1/models"
+ if !inference&&!monitor&&!discovery{deny(404);return}
  a:=r.Header.Values("Authorization")
  if len(a)!=1||!strings.HasPrefix(a[0],"Bearer "){deny(401);return}
  key:=strings.TrimPrefix(a[0],"Bearer ")
@@ -122,6 +124,11 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter,r *http.Request){
   if matches(key,digest){p=v;break}
  }
  if p.ID==""||!time.Now().Before(p.Expires){deny(401);return}
+ if discovery {
+  models:=make([]map[string]string,0,len(p.Models))
+  for _,m:=range p.Models{models=append(models,map[string]string{"id":m,"object":"model","owned_by":"restricted-gateway"})}
+  w.Header().Set("Content-Type","application/json");_ = json.NewEncoder(w).Encode(map[string]any{"object":"list","data":models});return
+ }
  if monitor {
   var v counter
   var usage usageTotals
