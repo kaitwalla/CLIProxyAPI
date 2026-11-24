@@ -1,0 +1,52 @@
+# Dedicated, API-key-only staging instance. Do not reuse a shared CPA config.
+config-version: 8
+server:
+  host: "127.0.0.1"
+  port: 8317
+  max-request-body-bytes: 33554432
+  discovery:
+    enabled: false
+  kv-store:
+    disabled: true
+management:
+  allow-remote: false
+  secret-key: ""
+  disable-control-panel: true
+  disable-auto-update-panel: true
+access:
+  api-keys:
+    - "REPLACE_WITH_DEDICATED_RANDOM_GATEWAY_SECRET"
+routing:
+  retry:
+    request-retry: 0
+    max-retry-credentials: 1
+    max-retry-interval: 0
+requests:
+  proxy-url: ""
+  streaming:
+    bootstrap-retries: 0
+oauth:
+  auth-dir: "/etc/t3-cpa/empty-auth"
+upstream:
+  codex:
+    disable-codex-cloaking: true
+    upstream-request-compression: false
+    response-steering: false
+    stream-bootstrap-buffering: false
+plugins:
+  enabled: false
+api-keys:
+  codex:
+    - name: "official-openai-api"
+      base-url: "https://api.openai.com/v1"
+      proxy-url: "direct"
+      request-retry: 0
+      models:
+        - name: "REPLACE_WITH_ALLOWED_API_MODEL"
+      keys:
+        - api-key: "REPLACE_WITH_PROJECT_API_KEY"
+# Legacy-compatible quota flags: all fallback disabled.
+quota-exceeded:
+  switch-project: false
+  switch-preview-model: false
+  antigravity-credits: false
