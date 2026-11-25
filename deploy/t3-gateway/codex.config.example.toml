@@ -1,0 +1,14 @@
+# Copy only into a fresh CODEX_HOME on a dedicated T3 execution environment.
+model = "REPLACE_WITH_ALLOWED_API_MODEL"
+model_provider = "restricted_gateway"
+cli_auth_credentials_store = "file"
+
+[model_providers.restricted_gateway]
+name = "Restricted inference gateway"
+base_url = "https://REPLACE_WITH_PRIVATE_GATEWAY_HOST/v1"
+env_key = "T3_GATEWAY_CLIENT_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+request_max_retries = 0
+stream_max_retries = 0

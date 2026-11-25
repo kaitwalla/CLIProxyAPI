@@ -617,6 +617,12 @@ func run() (exitStatus int) {
 	} else {
 		cfg.AuthDir = resolvedAuthDir
 	}
+	if config.T3IsolatedMode() {
+		if errIsolated := config.ValidateT3Isolated(cfg); errIsolated != nil {
+			logStartupErrorf("isolated CPA configuration rejected: %v", errIsolated)
+			return 1
+		}
+	}
 	githubauth.SetToken(cfg.GitHubToken)
 	managementasset.SetCurrentConfig(cfg)
 

@@ -1,0 +1,29 @@
+# Install as a drop-in for the T3 *server* service after creating an isolated
+# user and dedicated home. Replace both address placeholders before enabling.
+# Prefer an isolated VM when T3 needs broad network or filesystem access.
+[Service]
+User=t3-agent
+Group=t3-agent
+Environment=HOME=/var/lib/t3-agent
+Environment=CODEX_HOME=/var/lib/t3-agent/codex
+EnvironmentFile=/etc/t3-agent/inference.env
+UnsetEnvironment=OPENAI_API_KEY OPENAI_BASE_URL CHATGPT_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+UMask=0077
+StateDirectory=t3-agent
+WorkingDirectory=/srv/t3-workspaces
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+ReadWritePaths=/srv/t3-workspaces
+IPAddressDeny=any
+# Replace with the exact gateway and T3 operator/desktop IPs; this governs
+# ingress AND egress. No public Internet, DNS, metadata, or loopback access.
+IPAddressAllow=REPLACE_WITH_GATEWAY_IP/32
+IPAddressAllow=REPLACE_WITH_OPERATOR_IP/32

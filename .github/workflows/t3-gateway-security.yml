@@ -1,0 +1,39 @@
+name: T3 gateway security
+on:
+  push:
+    branches: [security/t3-client-isolation]
+  pull_request:
+    paths:
+      - 'cmd/t3-gateway/**'
+      - 'cmd/server/**'
+      - 'internal/config/**'
+      - 'internal/api/**'
+      - 'internal/runtime/executor/**'
+      - 'deploy/t3-gateway/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/t3-gateway-security.yml'
+permissions:
+  contents: read
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./cmd/t3-gateway
+      - run: go test -race -count=3 -cover ./cmd/t3-gateway
+      - run: go build -trimpath ./cmd/t3-gateway
+  isolated-cpa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 -run TestT3 ./internal/config ./internal/api ./internal/runtime/executor
+      - run: go build -trimpath ./cmd/server

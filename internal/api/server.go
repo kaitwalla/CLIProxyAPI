@@ -198,6 +198,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 
 	// Add middleware
+	if config.T3IsolatedMode() {
+		engine.Use(s.t3IsolationMiddleware())
+	}
 	engine.Use(logging.GinLogrusLogger())
 	engine.Use(logging.CPATraceIDMiddleware())
 	engine.Use(s.maxRequestBodyBytesMiddleware())
@@ -330,6 +333,9 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to start HTTP server: server not initialized")
 	}
 
+	if config.T3IsolatedMode() {
+		if err := config.ValidateT3Isolated(s.getConfig()); err != nil { return err }
+	}
 	addr := s.server.Addr
 	listener, errListen := net.Listen("tcp", addr)
 	if errListen != nil {
